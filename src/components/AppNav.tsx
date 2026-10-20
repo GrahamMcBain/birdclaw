@@ -41,6 +41,7 @@ import { READ_ONLY_ARCHIVE_PAGES } from "#/lib/api-enums";
 import { useDeploymentMode } from "#/lib/deployment-mode";
 
 const links = [
+	{ to: "/shared-inbox", label: "Shared mentions", icon: Inbox },
 	{ to: "/inbox", label: "Inbox", icon: Inbox },
 	{ to: "/today", label: "Today", icon: CalendarDays },
 	{ to: "/discuss", label: "Discuss", icon: MessagesSquare },
