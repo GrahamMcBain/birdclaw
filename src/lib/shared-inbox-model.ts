@@ -40,6 +40,14 @@ export interface SharedInboxItem {
 	handoff: SharedInboxHandoff | null;
 }
 export interface SharedInboxResponse {
+	teamTriage?: boolean;
+	capabilities?: { settings: boolean; sync: boolean; handoff: boolean };
+	coverage?: import("./shared-inbox-sync").SharedInboxCoverage;
+	sourceReadiness?: {
+		configured: boolean;
+		executableAvailable: boolean;
+		detail: string;
+	};
 	items: SharedInboxItem[];
 	total: number;
 	unread: number;

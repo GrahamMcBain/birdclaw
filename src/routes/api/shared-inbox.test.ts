@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { Effect } from "effect";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
@@ -6,7 +7,8 @@ import { getNativeDb, resetDatabaseForTests } from "#/lib/db";
 import { resetBirdclawPathsForTests } from "#/lib/config";
 const syncMock = vi.fn();
 vi.mock("#/lib/tweet-search-live", () => ({
-	syncTweetSearch: (...args: unknown[]) => syncMock(...args),
+	syncTweetSearchEffect: (...args: unknown[]) =>
+		Effect.tryPromise(() => syncMock(...args)),
 }));
 import { getSharedInbox, postSharedInbox } from "./shared-inbox";
 let folder: string;

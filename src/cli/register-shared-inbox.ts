@@ -1,15 +1,20 @@
+import { initializeTeamTriageAuthHome } from "#/lib/team-triage";
+import {
+	initializeTeamTriageStore,
+	configureTeamTriageAccount,
+} from "#/lib/team-triage-store";
+import { syncSharedInbox } from "#/lib/shared-inbox-sync";
 import type { CliCommandContext } from "./command-context";
 import {
 	getSharedInboxSettings,
 	listSharedInbox,
 	sharedInboxFilterSchema,
 	sharedInboxMutationSchema,
-	sharedInboxSearchQuery,
 	updateSharedInboxState,
 	saveSharedInboxSettings,
 } from "#/lib/shared-inbox";
 import { sendSharedInboxHandoff } from "#/lib/shared-inbox-handoff";
-import { syncTweetSearch } from "#/lib/tweet-search-live";
+
 export function registerSharedInboxCommands({
 	program,
 	print,
@@ -18,6 +23,24 @@ export function registerSharedInboxCommands({
 	const shared = program
 		.command("shared-inbox")
 		.description("Local shared OpenClaw/Peter mentions and durable triage");
+	shared
+		.command("init-team")
+		.description(
+			"Initialize only an empty dedicated private mentions store; never imports an archive",
+		)
+		.action(() => print(initializeTeamTriageStore(), asJson()));
+	shared
+		.command("init-team-auth-home")
+		.description("Admit only an empty dedicated xurl authentication HOME")
+		.action(() => print(initializeTeamTriageAuthHome(), asJson()));
+	shared
+		.command("configure-team-account <handle> <userId>")
+		.description(
+			"Bind explicit service account metadata; does not establish an X login",
+		)
+		.action((handle: string, userId: string) =>
+			print(configureTeamTriageAccount(handle, userId), asJson()),
+		);
 	shared
 		.command("list")
 		.option("--target <target>", "all, openclaw, peter", "all")
@@ -80,17 +103,7 @@ export function registerSharedInboxCommands({
 			"Existing account for bounded explicit Bird/xurl search",
 		)
 		.action(async (options) => {
-			print(
-				await syncTweetSearch({
-					query: sharedInboxSearchQuery(getSharedInboxSettings()),
-					account: options.account,
-					mode: "auto",
-					limit: 100,
-					maxPages: 2,
-					refresh: true,
-				}),
-				asJson(),
-			);
+			print(await syncSharedInbox(options.account), asJson());
 		});
 	shared
 		.command("send <tweetId>")

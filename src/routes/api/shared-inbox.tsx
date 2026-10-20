@@ -2,16 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { sensitiveRequestErrorResponse, jsonResponse } from "#/lib/http-effect";
 import { enqueueDatabaseWrite } from "#/lib/database-writer";
 import {
-	getSharedInboxSettings,
 	listSharedInbox,
 	saveSharedInboxSettings,
 	sharedInboxFilterSchema,
 	sharedInboxMutationSchema,
-	sharedInboxSearchQuery,
 	updateSharedInboxState,
 } from "#/lib/shared-inbox";
 import { sendSharedInboxHandoff } from "#/lib/shared-inbox-handoff";
-import { syncTweetSearch } from "#/lib/tweet-search-live";
+import {
+	syncSharedInbox,
+	SharedInboxSyncBusyError,
+	teamSourceReadiness,
+} from "#/lib/shared-inbox-sync";
+import { isTeamTriage, teamTriageCapabilities } from "#/lib/team-triage";
 import { ZodError } from "zod";
 
 function privateJson(value: unknown, status = 200) {
@@ -40,7 +43,6 @@ export function getSharedInbox(request: Request) {
 		);
 	}
 }
-let syncInFlight: Promise<unknown> | null = null;
 export async function postSharedInbox(request: Request) {
 	const denied = sensitiveRequestErrorResponse(request);
 	if (denied) return denied;
@@ -51,43 +53,42 @@ export async function postSharedInbox(request: Request) {
 		return privateJson({ message: "Invalid shared inbox action" }, 400);
 	}
 	try {
+		const capabilities = teamTriageCapabilities();
+		if (
+			(input.kind === "settings" && !capabilities.settings) ||
+			(input.kind === "handoff" && !capabilities.handoff)
+		)
+			return privateJson(
+				{
+					message:
+						"This action requires operator setup and is disabled in Team triage",
+				},
+				403,
+			);
 		if (input.kind === "handoff")
 			return privateJson({ handoff: await sendSharedInboxHandoff(input) });
 		if (input.kind === "sync") {
-			if (syncInFlight)
+			if (
+				isTeamTriage() &&
+				(input.account !== undefined || !teamSourceReadiness().configured)
+			)
 				return privateJson(
-					{ message: "Shared mentions sync already running" },
-					409,
+					{
+						message:
+							"The dedicated Team source is not ready or a client account override was supplied",
+					},
+					403,
 				);
-			// Reuse existing account resolution, transport credentials, rate limits and canonical tweet ingestion.
-			syncInFlight = syncTweetSearch({
-				query: sharedInboxSearchQuery(getSharedInboxSettings()),
-				account: input.account,
-				mode: "auto",
-				limit: 100,
-				maxPages: 2,
-				refresh: true,
-			});
-			try {
-				const result = (await syncInFlight) as Awaited<
-					ReturnType<typeof syncTweetSearch>
-				>;
-				return result.ok
-					? privateJson({
-							ok: true,
-							count: result.count,
-							source: result.source,
-						})
-					: privateJson(
-							{
-								message:
-									"Live sync failed. Check the configured Bird/xurl account and credentials; cached mentions are unchanged.",
-							},
-							502,
-						);
-			} finally {
-				syncInFlight = null;
-			}
+			const result = await syncSharedInbox(input.account);
+			return result.ok
+				? privateJson({ ok: true, count: result.count, source: result.source })
+				: privateJson(
+						{
+							message:
+								"Live sync failed. Check the dedicated source; cached rows are not current coverage.",
+						},
+						502,
+					);
 		}
 		await enqueueDatabaseWrite((db) => {
 			if (input.kind === "settings")
@@ -95,7 +96,18 @@ export async function postSharedInbox(request: Request) {
 			else updateSharedInboxState(input, db);
 		});
 		return privateJson({ ok: true });
-	} catch {
+	} catch (error) {
+		if (error instanceof SharedInboxSyncBusyError)
+			return jsonResponse(
+				{ message: error.message },
+				{
+					status: isTeamTriage() ? 429 : 409,
+					headers: {
+						"retry-after": String(error.retryAfterSeconds),
+						"cache-control": "no-store",
+					},
+				},
+			);
 		return privateJson(
 			{
 				message:

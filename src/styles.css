@@ -421,3 +421,7 @@ html.theme-transition::view-transition-new(theme-toggle) {
 
 .shared-inbox-dialog { border:0; padding:0; margin:auto; background:transparent; color:var(--ink); width:min(calc(100% - 32px),520px); max-height:90dvh; }
 .shared-inbox-dialog::backdrop { background:rgb(0 0 0 / 38%); }
+
+.shared-inbox-coverage { padding:14px 18px; background:var(--accent-soft); border-bottom:1px solid var(--line); font-size:11px; line-height:1.7; color:var(--ink-soft); }
+.shared-inbox-coverage strong { color:var(--ink); font-weight:700; }
+.shared-inbox-coverage button { margin-top:8px; }

@@ -1,3 +1,4 @@
+import { useDeploymentMode } from "#/lib/deployment-mode";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -48,6 +49,7 @@ async function requestInbox(
 	return response.json() as Promise<SharedInboxResponse>;
 }
 export function SharedInboxView() {
+	const { teamTriage } = useDeploymentMode();
 	const statusQuery = useQuery({
 		queryKey: queryKeys.status,
 		queryFn: ({ signal }) => fetchQueryEnvelope({ signal }),
@@ -76,9 +78,16 @@ export function SharedInboxView() {
 		queryKey: ["shared-inbox", filter],
 		queryFn: ({ signal }) => requestInbox(filter, signal),
 		staleTime: 0,
+		refetchInterval: teamTriage ? 15_000 : false,
+		refetchIntervalInBackground: false,
 	});
 	const data = query.data;
 	const items = data?.items ?? [];
+	const capabilities = data?.capabilities ?? {
+		sync: !teamTriage,
+		settings: !teamTriage,
+		handoff: !teamTriage,
+	};
 	function changeFilter(next: Partial<SharedInboxFilter>) {
 		setFilter((previous) => ({ ...previous, ...next, offset: 0 }));
 	}
@@ -177,29 +186,75 @@ export function SharedInboxView() {
 					</button>
 					<button
 						className={secondaryButtonClass}
-						disabled={busy}
+						disabled={busy || !capabilities.sync}
 						onClick={() =>
 							void mutate(
-								{ kind: "sync", account: selectedAccountId },
+								{
+									kind: "sync",
+									...(!teamTriage && selectedAccountId
+										? { account: selectedAccountId }
+										: {}),
+								},
 								"Bounded live search completed. Local results refreshed.",
 							)
 						}
 					>
 						<RefreshCw size={15} /> Sync mentions
 					</button>
-					<button
-						className={secondaryButtonClass}
-						disabled={!data || busy}
-						onClick={() => setSettings(structuredClone(data!.settings))}
-					>
-						<Settings2 size={15} /> Name matches
-					</button>
+					{capabilities.settings && (
+						<button
+							className={secondaryButtonClass}
+							disabled={!data || busy}
+							onClick={() => setSettings(structuredClone(data!.settings))}
+						>
+							<Settings2 size={15} /> Name matches
+						</button>
+					)}
 				</div>
 				<p className="shared-inbox-help">
 					Opens unread tweets on this page only. Only confirmed popup opens are
 					marked read.
 				</p>
 			</header>
+			{data?.coverage && (
+				<section
+					className="shared-inbox-coverage"
+					aria-label="Live source coverage"
+				>
+					<strong>
+						{teamTriage ? "Team-shared mentions-only state" : "Source coverage"}{" "}
+						· {data.coverage.status}
+					</strong>
+					<p>{data.sourceReadiness?.detail}</p>
+					<p>{data.coverage.detail}</p>
+					<p>
+						Last attempt:{" "}
+						{data.coverage.lastAttemptAt
+							? new Date(data.coverage.lastAttemptAt).toLocaleString()
+							: "never"}{" "}
+						· Last verified live sync:{" "}
+						{data.coverage.lastSuccessAt
+							? new Date(data.coverage.lastSuccessAt).toLocaleString()
+							: "never"}
+					</p>
+					{data.coverage.searchedSince && (
+						<p>
+							Bounded recent window since{" "}
+							{new Date(data.coverage.searchedSince).toLocaleString()}; at most
+							100 results / two pages. Last fetched:{" "}
+							{data.coverage.fetched ?? "unknown"}.
+						</p>
+					)}
+					<button
+						className={secondaryButtonClass}
+						disabled={query.isFetching}
+						onClick={() => void query.refetch()}
+					>
+						Refresh shared state
+					</button>
+				</section>
+			)}
+
 			<div className="shared-inbox-filters">
 				<div className="shared-inbox-targets" aria-label="Mention target">
 					{(
@@ -317,8 +372,9 @@ export function SharedInboxView() {
 					<Inbox size={30} />
 					<h2>No matching mentions</h2>
 					<p>
-						Change the filters, import an archive, or explicitly sync a
-						connected Bird/xurl account. Nothing is fetched automatically.
+						{teamTriage
+							? "Change the filters, refresh shared state, or ask an operator to connect the dedicated xurl service account. Never import a personal archive into this shared service. Nothing is fetched automatically."
+							: "Change the filters, import an archive, or explicitly sync a connected Bird/xurl account. Nothing is fetched automatically."}
 					</p>
 				</div>
 			)}
@@ -414,26 +470,47 @@ export function SharedInboxView() {
 							>
 								{item.handledAt ? "Reopen" : "Mark handled"}
 							</button>
-							<button
-								className={secondaryButtonClass}
-								disabled={
-									busy ||
-									!item.url ||
-									Boolean(item.handoff && item.handoff.status !== "pending")
+							<select
+								aria-label={"Classify tweet " + item.id}
+								value={item.classification}
+								disabled={busy}
+								onChange={(event) =>
+									void mutate(
+										{
+											kind: "classify",
+											id: item.id,
+											value: event.target.value,
+										},
+										"Classification saved; reading and resolution unchanged.",
+									)
 								}
-								onClick={() => {
-									setHandoff(item);
-									setClassification(
-										item.classification === "feature" ? "feature" : "bug",
-									);
-									setContext("");
-								}}
 							>
-								<Send size={14} />
-								{item.handoff?.status === "pending"
-									? "Retry connection"
-									: "Send to Roboclaw"}
-							</button>
+								<option value="unclassified">Unclassified</option>
+								<option value="bug">Bug report</option>
+								<option value="feature">Feature request</option>
+							</select>
+							{capabilities.handoff && (
+								<button
+									className={secondaryButtonClass}
+									disabled={
+										busy ||
+										!item.url ||
+										Boolean(item.handoff && item.handoff.status !== "pending")
+									}
+									onClick={() => {
+										setHandoff(item);
+										setClassification(
+											item.classification === "feature" ? "feature" : "bug",
+										);
+										setContext("");
+									}}
+								>
+									<Send size={14} />
+									{item.handoff?.status === "pending"
+										? "Retry connection"
+										: "Send to Roboclaw"}
+								</button>
+							)}
 						</div>
 						{item.handoff && (
 							<div className="shared-inbox-handoff">

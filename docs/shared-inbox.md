@@ -79,3 +79,7 @@ BIRDCLAW_HOME="$PWD/.openclaw/tmp/shared-preview" node bin/birdclaw.mjs serve --
 Then open `http://127.0.0.1:4317/shared-inbox` from the same host or an authorized private tunnel. This example seeds the built-in **synthetic demo**, not live mentions. Never reuse a production archive for a public preview. For live use choose the intended private BIRDCLAW_HOME instead and configure its account/transport and optional dedicated Roboclaw connection.
 
 Phase 1 has no alerts, hourly polling, on-call rotation, release automation, automatic X replies, production deployment or merge workflow.
+
+## Team-shared deployment
+
+Use the separate [persistent Team mentions-only deployment](team-triage-deployment.md) contract. It requires a fresh dedicated store, isolated purpose-bound xurl authentication HOME, authenticated Team-member proxy headers, a distinct HTTPS app hostname and an operator-owned persistent supervisor. It blocks all other archive/DM/admin/write/MCP routes and does not enable the remote-web bypass. A portal is a temporary bearer preview, not a persistent Team-authenticated service. Real Team ingress and live X verification remain deployment prerequisites, not claims established by synthetic tests.

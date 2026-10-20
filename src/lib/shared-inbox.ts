@@ -1,3 +1,8 @@
+import {
+	readSharedInboxCoverage,
+	teamSourceReadiness,
+} from "./shared-inbox-sync";
+import { isTeamTriage, teamTriageCapabilities } from "./team-triage";
 import { roboclawHookConfiguration } from "./shared-inbox-hook-config";
 import { z } from "zod";
 import { getNativeDb, getReadDb } from "./db";
@@ -104,6 +109,12 @@ export function saveSharedInboxSettings(
 	return parsed;
 }
 export function getSharedInboxIntegration() {
+	if (isTeamTriage() && !teamTriageCapabilities().handoff)
+		return {
+			configured: false,
+			detail:
+				"Roboclaw handoff is disabled for Team users until an operator explicitly authorizes and connects it.",
+		};
 	try {
 		const configured = Boolean(roboclawHookConfiguration());
 		return {
@@ -249,6 +260,13 @@ export function listSharedInbox(
 		offset: query.offset,
 		limit: query.limit,
 		settings,
+		teamTriage: isTeamTriage(),
+		capabilities: {
+			...teamTriageCapabilities(),
+			sync: !isTeamTriage() || teamSourceReadiness(db).configured,
+		},
+		coverage: readSharedInboxCoverage(db),
+		sourceReadiness: teamSourceReadiness(db),
 		integration: getSharedInboxIntegration(),
 	};
 }
