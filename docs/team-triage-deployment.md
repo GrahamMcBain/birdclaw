@@ -63,3 +63,28 @@ The UI distinguishes unconfigured source, never verified, running, successful bo
 ## Verification boundary and service lifetime
 
 App tests use synthetic proxy/user assertions and public-looking fixture reports, not actual Team SSO or live X. Operator verification of Team membership enforcement and the real account remains required. An installed supervisor and persistent storage must survive Gateway restart. **Portals are temporary bearer-auth previews, end on Gateway restart, do not supply Team identity and are not this persistent deployment.** A Website dashboard loads the app in the viewer's browser; it does not proxy or authenticate the app. Do not claim a live dashboard from a worker-local render, a portal receipt, or no-data demo.
+
+## Optional Grok `x_search` read source (no direct X API)
+
+Choose **one** source explicitly with `BIRDCLAW_TRIAGE_SOURCE=grok` (existing default: `xurl`). Grok uses the xAI Responses API at the hard-coded `https://api.x.ai/v1/responses`, model `grok-4.7`, and only the server-side `x_search` tool. It never calls the direct X API, discovers OAuth accounts, or falls back to Bird/xurl. No X login, numeric X user ID or xurl installation is required for this source; steps 5 and the dedicated X account section above apply only to xurl. All separate-origin, Team identity proxy, private dedicated store/HOME, purpose-marker, write-disable and supervisor requirements still apply. The legacy HOME purpose marker name is retained for compatibility and is not a claim of X authentication.
+
+After initializing the dedicated store and isolated HOME as above, configure local ingestion ownership (not an X identity or authentication proof):
+
+```sh
+BIRDCLAW_HOME=/var/lib/birdclaw-team/mentions BIRDCLAW_TEST_SEED_DEMO_DATA=0 \
+  node /opt/birdclaw-team/bin/birdclaw.mjs --json shared-inbox configure-team-grok-source
+```
+
+Set `BIRDCLAW_TRIAGE_SOURCE=grok` and `BIRDCLAW_TRIAGE_SYNC_ACCOUNT=team-triage` in the approved service configuration. Do not put the xAI key in this repository, example env, browser, logs or command arguments. Use a **dedicated protected** `BIRDCLAW_XAI_API_KEY`, bound only to `api.x.ai`.
+
+### Supported protected-key consumer
+
+OpenClaw's protected store injects only opaque environment sentinels into **Gateway-hosted exec** with `secrets.egressProxy.enabled=true`; Node 26 global fetch honors its injected `NODE_USE_ENV_PROXY=1`, authenticated proxy and CA environment. The proxy substitutes the real key only at HTTPS egress to the bound hostname. Native Codex shell, remote node, Bun and an ordinary external supervisor do **not** automatically receive this protected secret. Never copy a sentinel, read/export the key, disable TLS, or use a plaintext fallback. A credential saved after a turn's first managed command requires a fresh turn/grant. A future persistent deployment needs an operator-approved supported secret consumer/egress integration; merely saving the key does not provision that service. This implementation neither installs that integration nor deploys the app.
+
+### Search and evidence limits
+
+Manual sync retains the persisted five-minute cooldown, overlap guard and 60-second job deadline. Grok fetch has a 45-second abort, refuses redirects, caps response bytes at 2 MB, tool turns at two and accepted posts at 100. Date filters use UTC days as required by xAI; snowflake-derived timestamps are additionally checked against the exact six-day sync interval. Turn/output limits are not a hard dollar or fetched-post budget; xAI bills model tokens and fetched items. There is no automatic polling or posting.
+
+Only completed responses with an executed X-search tool and valid JSON are accepted. Each imported post must have a provider-supplied X status citation; malformed, uncited, off-host and out-of-window results fail closed before persistence. Empty results require an executed search too. Grok-extracted text and handles remain **model extraction**, not authoritative/verbatim X API records; citations do not independently prove exact quotations or identity. Handles use explicitly synthetic `grok-handle:` profile IDs, never invented numeric X identities. A collision with a different existing profile fails closed rather than merging identities. Existing tweet records and shared read/handled/classification state are not overwritten; provenance is recorded as `grok`. Coverage explicitly warns that results can omit/misquote posts and are not continuous or exhaustive monitoring.
+
+Fixture tests verify the adapter and Team boundary; a real key/model/tool test and real authenticated edge verification are separate, and must not be inferred from fixture success.

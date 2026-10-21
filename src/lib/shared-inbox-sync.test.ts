@@ -9,10 +9,15 @@ import { resetBirdclawPathsForTests } from "./config";
 import {
 	initializeTeamTriageStore,
 	configureTeamTriageAccount,
+	configureTeamGrokSource,
 } from "./team-triage-store";
 import { writeSyncCache } from "./sync-cache";
 const searchMock = vi.fn();
 const identityMock = vi.fn();
+const grokMock = vi.fn();
+vi.mock("./grok-search", () => ({
+	searchViaGrok: (...args: unknown[]) => grokMock(...args),
+}));
 vi.mock("./tweet-search-live", () => ({
 	syncTweetSearchEffect: (...args: unknown[]) =>
 		Effect.tryPromise(() => searchMock(...args)),
@@ -57,6 +62,8 @@ beforeEach(() => {
 	vi.stubEnv("BIRDCLAW_XURL_OAUTH2_APP", "team-read-app");
 	vi.stubEnv("PATH", path.join(folder, "bin"));
 	searchMock.mockReset();
+	grokMock.mockReset();
+	vi.stubEnv("BIRDCLAW_TRIAGE_SOURCE", "xurl");
 	identityMock.mockReset();
 	identityMock.mockReturnValue(
 		Effect.succeed({ username: "triage_bot", id: "999" }),
@@ -206,6 +213,99 @@ describe("source coverage is evidence, not row count", () => {
 			expect.objectContaining({
 				pinnedOAuth2: { app: "team-read-app", username: "triage_bot" },
 			}),
+		);
+	});
+});
+
+describe("Team Grok source selection", () => {
+	it("ingests without X OAuth, preserves prior rows and shared state, and keeps cooldown", async () => {
+		vi.stubEnv("BIRDCLAW_TRIAGE_SOURCE", "grok");
+		vi.stubEnv("BIRDCLAW_XAI_API_KEY", "synthetic-test-key");
+		vi.stubEnv("BIRDCLAW_XURL_OAUTH2_APP", "");
+		configureTeamGrokSource();
+		expect(
+			getNativeDb()
+				.prepare(
+					"select external_user_id,transport from accounts where id='team-triage'",
+				)
+				.get(),
+		).toMatchObject({ external_user_id: null, transport: "grok" });
+		grokMock.mockResolvedValue({
+			data: [
+				{
+					id: "123456789",
+					author_id: "grok-handle:example",
+					text: "OpenClaw issue",
+					created_at: new Date().toISOString(),
+				},
+			],
+			includes: {
+				users: [
+					{ id: "grok-handle:example", username: "example", name: "example" },
+				],
+			},
+		});
+		expect(teamSourceReadiness().configured).toBe(true);
+		expect((await syncSharedInbox()).source).toBe("grok");
+		expect(identityMock).not.toHaveBeenCalled();
+		expect(searchMock).not.toHaveBeenCalled();
+		const db = getNativeDb();
+		db.prepare(
+			"insert into shared_inbox_state(tweet_id,handled_at,classification,updated_at) values (?,?,'bug',?)",
+		).run("123456789", "handled", "now");
+		await expect(syncSharedInbox()).rejects.toBeInstanceOf(
+			SharedInboxSyncBusyError,
+		);
+		writeSyncCache(
+			"shared-inbox:source-coverage:v1",
+			{ ...readSharedInboxCoverage(), lastAttemptAt: "2000-01-01T00:00:00Z" },
+			db,
+		);
+		grokMock.mockResolvedValue({
+			data: [
+				{
+					id: "123456789",
+					author_id: "grok-handle:example",
+					text: "changed",
+					created_at: new Date().toISOString(),
+				},
+			],
+		});
+		await syncSharedInbox();
+		expect(
+			db.prepare("select text from tweets where id=?").get("123456789"),
+		).toMatchObject({ text: "OpenClaw issue" });
+		expect(
+			db
+				.prepare(
+					"select handled_at,classification from shared_inbox_state where tweet_id=?",
+				)
+				.get("123456789"),
+		).toMatchObject({ handled_at: "handled", classification: "bug" });
+		expect(readSharedInboxCoverage().detail).toContain("Model extraction");
+	});
+	it("refuses client account overrides and missing key without fallback", async () => {
+		vi.stubEnv("BIRDCLAW_TRIAGE_SOURCE", "grok");
+		vi.stubEnv("BIRDCLAW_XAI_API_KEY", "");
+		expect(teamSourceReadiness().configured).toBe(false);
+		await expect(syncSharedInbox("personal")).rejects.toThrow(
+			"Live source verification or sync failed",
+		);
+		expect(grokMock).not.toHaveBeenCalled();
+		expect(identityMock).not.toHaveBeenCalled();
+		expect(searchMock).not.toHaveBeenCalled();
+	});
+	it("redacts failed Grok calls and never verifies them", async () => {
+		vi.stubEnv("BIRDCLAW_TRIAGE_SOURCE", "grok");
+		vi.stubEnv("BIRDCLAW_XAI_API_KEY", "synthetic-test-key");
+		grokMock.mockRejectedValue(new Error("synthetic-test-key"));
+		await expect(syncSharedInbox()).rejects.toThrow(
+			"Live source verification or sync failed",
+		);
+		expect(readSharedInboxCoverage().status).toBe("failed");
+		expect(readSharedInboxCoverage().lastSuccessAt).toBeNull();
+		expect(JSON.stringify(readSharedInboxCoverage())).not.toContain(
+			"synthetic-test-key",
 		);
 	});
 });

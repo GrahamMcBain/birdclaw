@@ -2,6 +2,7 @@ import { initializeTeamTriageAuthHome } from "#/lib/team-triage";
 import {
 	initializeTeamTriageStore,
 	configureTeamTriageAccount,
+	configureTeamGrokSource,
 } from "#/lib/team-triage-store";
 import { syncSharedInbox } from "#/lib/shared-inbox-sync";
 import type { CliCommandContext } from "./command-context";
@@ -41,6 +42,12 @@ export function registerSharedInboxCommands({
 		.action((handle: string, userId: string) =>
 			print(configureTeamTriageAccount(handle, userId), asJson()),
 		);
+	shared
+		.command("configure-team-grok-source")
+		.description(
+			"Configure local Grok ingestion ownership; requires no X login and does not verify the key",
+		)
+		.action(() => print(configureTeamGrokSource(), asJson()));
 	shared
 		.command("list")
 		.option("--target <target>", "all, openclaw, peter", "all")

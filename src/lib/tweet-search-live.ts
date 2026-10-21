@@ -35,7 +35,7 @@ export interface SyncTweetSearchOptions {
 export type SyncTweetSearchResult =
 	| {
 			ok: true;
-			source: "bird" | "xurl" | "bird+xurl" | "cache";
+			source: "bird" | "xurl" | "bird+xurl" | "cache" | "grok";
 			accountId: string;
 			query: string;
 			count: number;

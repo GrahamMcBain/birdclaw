@@ -153,3 +153,13 @@ export function configureTeamTriageAccount(handle: string, userId: string) {
 	).run(handle.replace(/^@/, ""), userId, new Date().toISOString());
 	return { ok: true, accountId: "team-triage", credentialsVerified: false };
 }
+
+/** Grok uses an app key, not an X identity. This row is only local edge ownership. */
+export function configureTeamGrokSource() {
+	assertTeamTriageStore();
+	const db = getNativeDb({ seedDemoData: false });
+	db.prepare(
+		"insert into accounts(id,name,handle,external_user_id,transport,is_default,created_at) values ('team-triage','Dedicated Grok search','birdclaw_grok_source',null,'grok',1,?) on conflict(id) do update set name=excluded.name,handle=excluded.handle,external_user_id=null,transport='grok'",
+	).run(new Date().toISOString());
+	return { ok: true, accountId: "team-triage", credentialsVerified: false };
+}

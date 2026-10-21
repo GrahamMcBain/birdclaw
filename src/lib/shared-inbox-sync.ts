@@ -1,3 +1,5 @@
+import { searchViaGrok } from "./grok-search";
+import { ingestTweetPayload } from "./tweet-repository";
 import { Effect } from "effect";
 import { accessSync, constants } from "node:fs";
 import path from "node:path";
@@ -21,6 +23,9 @@ function writeSyncCache(db: Database, key: string, value: unknown) {
 }
 import { assertTeamTriageAuthHome, isTeamTriage } from "./team-triage";
 
+export function usesGrokSource() {
+	return process.env.BIRDCLAW_TRIAGE_SOURCE === "grok";
+}
 const KEY = "shared-inbox:source-coverage:v1";
 const TEAM_COOLDOWN_MS = 5 * 60_000;
 export interface SharedInboxCoverage {
@@ -81,6 +86,26 @@ export function teamSourceReadiness(db: Database = getReadDb()) {
 			detail:
 				"Uses the selected local Bird/xurl account; only an explicit sync verifies a live source.",
 		};
+	if (usesGrokSource()) {
+		let ready = false;
+		try {
+			assertTeamTriageAuthHome();
+			ready = Boolean(
+				process.env.BIRDCLAW_XAI_API_KEY &&
+				process.env.BIRDCLAW_TRIAGE_SYNC_ACCOUNT === "team-triage" &&
+				resolveLiveSyncAccount(db, "team-triage"),
+			);
+		} catch {
+			/* fail closed */
+		}
+		return {
+			configured: ready,
+			executableAvailable: true,
+			detail: ready
+				? "Dedicated Grok x_search configured; not proof of a live read. Results are citation-backed model extraction, not authoritative X API records."
+				: "Grok requires a dedicated protected xAI key, isolated HOME and Team store/account binding.",
+		};
+	}
 	const selector = process.env.BIRDCLAW_TRIAGE_SYNC_ACCOUNT?.trim();
 	let executableAvailable = false;
 	for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
@@ -159,6 +184,64 @@ export async function syncSharedInbox(
 					}
 				: undefined;
 			const job = Effect.gen(function* () {
+				if (usesGrokSource()) {
+					if (
+						!team ||
+						account !== undefined ||
+						!teamSourceReadiness(db).configured
+					)
+						throw new Error("Dedicated Grok source is not ready");
+					const query = sharedInboxSearchQuery(getSharedInboxSettings(db));
+					const until = startedAt;
+					const lower = since!;
+					const payload = yield* Effect.tryPromise({
+						try: (signal) => searchViaGrok(query, lower, until, signal),
+						catch: () => new Error("Grok read failed"),
+					});
+					const tweetIds = yield* Effect.tryPromise(() =>
+						enqueueDatabaseWrite((writer) => {
+							// Never let a model extraction overwrite existing archive records or shared triage state.
+							const fresh = {
+								...payload,
+								data: payload.data.filter(
+									(row) =>
+										!writer
+											.prepare("select id from tweets where id=?")
+											.get(row.id),
+								),
+							};
+							return ingestTweetPayload(writer, {
+								accountId: "team-triage",
+								payload: fresh,
+								source: "grok",
+								edgeKind: "search",
+								provenance: {
+									sourceUrlByTweetId: new Map(
+										fresh.data.map((row) => [
+											row.id,
+											`https://x.com/i/status/${row.id}`,
+										]),
+									),
+								},
+							});
+						}, db),
+					);
+					return {
+						ok: true,
+						source: "grok",
+						accountId: "team-triage",
+						query,
+						count: payload.data.length,
+						pageCount: 1,
+						tweetIds,
+					} as const;
+				}
+				if (
+					team &&
+					process.env.BIRDCLAW_TRIAGE_SOURCE &&
+					process.env.BIRDCLAW_TRIAGE_SOURCE !== "xurl"
+				)
+					throw new Error("Unknown source");
 				if (team) {
 					assertTeamTriageAuthHome();
 					if (
@@ -229,7 +312,9 @@ export async function syncSharedInbox(
 					fetched: result.ok ? result.count : null,
 					detail: result.ok
 						? live
-							? "Last bounded source read succeeded. At most 100 results / two pages; this is not complete historical or continuous coverage."
+							? result.source === "grok"
+								? "Bounded Grok x_search completed: at most 100 citation-backed extracted posts, two tool turns. Model extraction may omit or misquote posts; not complete historical or continuous coverage, nor proof of no mentions."
+								: "Last bounded source read succeeded. At most 100 results / two pages; this is not complete historical or continuous coverage."
 							: "Only cached data was read; a live connection was not verified."
 						: "Last source read failed. Connection/permissions require operator attention; cached rows do not establish current coverage.",
 				});
